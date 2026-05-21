@@ -24,6 +24,8 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import tempfile
 import time
 from io import BytesIO
 from pathlib import Path
@@ -155,6 +157,12 @@ def parse_args():
         help="Disable streaming. test_script.py uses streaming by default.",
     )
     parser.add_argument(
+        "--transport",
+        choices=("requests", "curl"),
+        default=os.getenv("QWEN3_5_TRANSPORT", "curl"),
+        help="HTTP transport for model calls. Use curl when Python TLS fails.",
+    )
+    parser.add_argument(
         "--history_n",
         type=int,
         default=4,
@@ -177,6 +185,18 @@ def parse_args():
         type=str,
         default=None,
         help="Optional app resolver model; defaults to --model.",
+    )
+    parser.add_argument(
+        "--answer_output_path",
+        type=str,
+        default=None,
+        help="Optional local JSON path for the final answer action payload.",
+    )
+    parser.add_argument(
+        "--trace_dir",
+        type=str,
+        default=None,
+        help="Optional directory for screenshots and trace artifacts.",
     )
     return parser.parse_args()
 
@@ -257,6 +277,7 @@ class Qwen35MultimodalWrapper:
         frequency_penalty: float = 0,
         presence_penalty: float = 0,
         stream: bool = True,
+        transport: str = "curl",
         max_retry: int = 3,
     ):
         self.url = url
@@ -268,6 +289,7 @@ class Qwen35MultimodalWrapper:
         self.frequency_penalty = frequency_penalty
         self.presence_penalty = presence_penalty
         self.stream = stream
+        self.transport = transport
         self.max_retry = max_retry
 
     def predict_mm(self, messages: list[dict[str, Any]]) -> tuple[str, Any, Any]:
@@ -287,6 +309,15 @@ class Qwen35MultimodalWrapper:
             "content-type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
+
+        if self.transport == "curl":
+            for attempt in range(1, self.max_retry + 1):
+                curl_result = self._predict_mm_with_curl(payload, headers)
+                if curl_result is not None:
+                    return curl_result[0], payload_messages, curl_result[1]
+                if attempt < self.max_retry:
+                    time.sleep(wait_seconds)
+            return ERROR_CALLING_LLM, payload_messages, None
 
         wait_seconds = 5
         for attempt in range(1, self.max_retry + 1):
@@ -313,9 +344,102 @@ class Qwen35MultimodalWrapper:
                 return content, payload_messages, body
             except Exception as exc:
                 print(f"[WARN] Qwen3.5 call failed on attempt {attempt}: {exc}")
+                curl_result = self._predict_mm_with_curl(payload, headers)
+                if curl_result is not None:
+                    return curl_result[0], payload_messages, curl_result[1]
                 if attempt < self.max_retry:
                     time.sleep(wait_seconds)
         return ERROR_CALLING_LLM, payload_messages, None
+
+    def _predict_mm_with_curl(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+    ) -> tuple[str, Any] | None:
+        """Fallback for environments where Python SSL fails but curl succeeds."""
+        curl_payload = dict(payload)
+        curl_payload["stream"] = False
+
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json", encoding="utf-8") as temp_file:
+                json.dump(curl_payload, temp_file, ensure_ascii=False)
+                temp_path = temp_file.name
+
+            curl_binary = "curl.exe" if os.name == "nt" else "curl"
+            result = subprocess.run(
+                [
+                    curl_binary,
+                    "-sS",
+                    "-X",
+                    "POST",
+                    self.url,
+                    "-H",
+                    "accept: application/json",
+                    "-H",
+                    "content-type: application/json",
+                    "-H",
+                    f"Authorization: {headers['Authorization']}",
+                    "--data-binary",
+                    f"@{temp_path}",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
+                check=False,
+            )
+            if result.returncode != 0:
+                print(f"[WARN] curl fallback failed: {result.stderr.strip()}")
+                return None
+
+            try:
+                body = json.loads(result.stdout, strict=False)
+            except json.JSONDecodeError as exc:
+                snippet = result.stdout[:500].replace(self.api_key, "<redacted>")
+                print(f"[WARN] curl fallback returned non-JSON response: {exc}; body starts: {snippet}")
+                content = self._extract_content_from_malformed_response(result.stdout)
+                if content is not None:
+                    print("[INFO] Used curl fallback with malformed-response content extraction.")
+                    return content, {"raw_response": result.stdout}
+                return None
+            if "error" in body:
+                print(f"[WARN] curl fallback returned error: {body['error']}")
+                return None
+
+            message = body["choices"][0]["message"]
+            content = message.get("content")
+            if content is None:
+                tool_calls = message.get("tool_calls") or []
+                if tool_calls:
+                    content = "\n".join(json.dumps(call, ensure_ascii=False) for call in tool_calls)
+                else:
+                    content = message.get("reasoning") or ""
+            print("[INFO] Used curl fallback for Qwen3.5 call.")
+            return content, body
+        except Exception as exc:
+            print(f"[WARN] curl fallback failed: {exc}")
+            return None
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    @staticmethod
+    def _extract_content_from_malformed_response(response_text: str) -> str | None:
+        marker = '"content":"'
+        start = response_text.find(marker)
+        if start == -1:
+            return None
+        start += len(marker)
+        end = response_text.find('","refusal"', start)
+        if end == -1:
+            return None
+        raw_content = response_text[start:end]
+        try:
+            return json.loads(f'"{raw_content}"', strict=False)
+        except Exception:
+            return raw_content.replace('\\"', '"').replace("\\n", "\n")
 
 
 def parse_action(output_text: str) -> dict[str, Any]:
@@ -333,8 +457,10 @@ def rescale_coordinates(action_parameter: dict[str, Any], width: int, height: in
         action_parameter["action"] = "click"
     for key in ("coordinate", "coordinate1", "coordinate2"):
         if key in action_parameter:
-            action_parameter[key][0] = int(action_parameter[key][0] / 1000 * width)
-            action_parameter[key][1] = int(action_parameter[key][1] / 1000 * height)
+            x = max(0, min(1000, int(action_parameter[key][0])))
+            y = max(0, min(1000, int(action_parameter[key][1])))
+            action_parameter[key][0] = int(x / 1000 * width)
+            action_parameter[key][1] = int(y / 1000 * height)
     return action_parameter
 
 
@@ -437,6 +563,57 @@ def try_parse_json(text: str):
         return None
 
 
+def extract_json_payload(text: str):
+    """Best-effort extraction for final structured answers."""
+    parsed = try_parse_json(text)
+    if parsed is not None:
+        return parsed
+
+    if not text:
+        return None
+
+    starts = [idx for idx in (text.find("{"), text.find("[")) if idx != -1]
+    if not starts:
+        return None
+
+    decoder = json.JSONDecoder()
+    try:
+        parsed, _ = decoder.raw_decode(text[min(starts):])
+        return parsed
+    except Exception:
+        return None
+
+
+def write_answer_output(answer_text: str, output_path: str | None):
+    """Persist a final answer as JSON, preserving raw text on parse failure."""
+    if not output_path:
+        return
+
+    payload = extract_json_payload(answer_text)
+    if payload is None:
+        payload = {"raw_answer": answer_text}
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[ANSWER SAVED] {path}")
+
+
+def make_trace_dirs(instruction: str, trace_dir: str | None) -> tuple[str, str]:
+    if trace_dir:
+        task_dir = trace_dir
+    else:
+        task_dir = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", instruction.replace(" ", "_"))
+        task_dir = task_dir.strip(" ._")[:80] or "mobile_agent_task"
+
+    anno_dir = f"{task_dir}_anno"
+    for directory in (task_dir, anno_dir):
+        if os.path.exists(directory):
+            shutil.rmtree(directory)
+        os.makedirs(directory)
+    return task_dir, anno_dir
+
+
 def execute_action(
     action_parameter: dict[str, Any],
     output_text: str,
@@ -445,6 +622,7 @@ def execute_action(
     resolver_api_key: str,
     resolver_url: str,
     resolver_model: str,
+    answer_output_path: str | None = None,
 ) -> bool:
     action_type = action_parameter["action"]
 
@@ -496,6 +674,7 @@ def execute_action(
     elif action_type == "answer":
         conclusion = action_parameter.get("text") or output_text.split("<tool_call>")[0].strip()
         print(f"[ANSWER] {conclusion}")
+        write_answer_output(conclusion, answer_output_path)
         return True
     elif action_type in ("call_user", "calluser", "interact"):
         user_prompt = action_parameter.get("text", "the required action")
@@ -519,12 +698,7 @@ def main():
     if args.add_info:
         instruction = f"{instruction} ({args.add_info})"
 
-    task_dir = instruction.replace(" ", "_")[:80]
-    anno_dir = task_dir + "_anno"
-    for directory in (task_dir, anno_dir):
-        if os.path.exists(directory):
-            shutil.rmtree(directory)
-        os.makedirs(directory)
+    task_dir, anno_dir = make_trace_dirs(instruction, args.trace_dir)
 
     resolver_api_key = args.app_resolver_api_key or args.api_key
     resolver_url = args.app_resolver_url or args.url
@@ -541,6 +715,7 @@ def main():
         frequency_penalty=args.frequency_penalty,
         presence_penalty=args.presence_penalty,
         stream=not args.no_stream,
+        transport=args.transport,
     )
 
     for step_id in range(args.max_steps):
@@ -583,6 +758,7 @@ def main():
             resolver_api_key,
             resolver_url,
             resolver_model,
+            args.answer_output_path,
         )
 
         history.append({"output": output_text, "image": screenshot_path})

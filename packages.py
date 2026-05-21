@@ -4,6 +4,7 @@ Provides bidirectional lookup: package -> names and name -> packages.
 """
 
 PACKAGE_STR_LIST = '''com.tencent.mm	微信	wechat			
+com.teslamotors.tesla	特斯拉	tesla			
 com.tencent.mobileqq	qq	腾讯qq			
 com.sina.weibo	微博				
 com.taobao.taobao	淘宝				
