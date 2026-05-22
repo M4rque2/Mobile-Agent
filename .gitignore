@@ -4,3 +4,4 @@ __pycache__/
 *.py[cod]
 tasks/**/traces/
 tasks/**/*.json
+references/agent-frameworks/
