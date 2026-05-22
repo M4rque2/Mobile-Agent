@@ -22,7 +22,7 @@ for _ in 1 2 3; do
         break
     fi
 done
-"${ADB_BIN}" shell monkey -p com.teslamotors.tesla -c android.intent.category.LAUNCHER 1 >/dev/null
+"${ADB_BIN}" shell monkey -p com.xingin.xhs -c android.intent.category.LAUNCHER 1 >/dev/null
 sleep 3
 
 python run_qwen3_5_for_mobile.py \
@@ -31,7 +31,7 @@ python run_qwen3_5_for_mobile.py \
     --api_key "${QWEN3_5_API_KEY:?Set QWEN3_5_API_KEY in .env.local or the environment}" \
     --model "${QWEN3_5_MODEL:?Set QWEN3_5_MODEL in .env.local or the environment}" \
     --instruction "${PROMPT}" \
-    --answer_output_path "${TASK_DIR}/tesla_charge_stations.json" \
+    --answer_output_path "${TASK_DIR}/xhs_notes.json" \
     --trace_dir "${TASK_DIR}/traces/latest" \
     --max_steps 120 \
     --history_n 6 \
