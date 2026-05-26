@@ -1,0 +1,12 @@
+{
+  "endpoint_url": "https://lpai-llm.lixiang.com/inference/qwen/qwen3.5-397b-a17b/v1/chat/completions",
+  "api_key": "ak-infer-ZGF0YS1sYWtlOnRqZ3p2dTpBMDAwMDAwOnpoYW5nY2hpMUBsaXhpYW5nLmNvbTppbmZlcg_NWJkYWE3NjgtMTExYS00ZmI5LWE0Y2UtZmNkNDQ2ZmE4ZWJh",
+  "model_name": "Qwen__Qwen3_5-397B-A17B",
+  "adb_path": "D:/platform-tools/adb.exe",
+  "temperature": 0.2,
+  "top_p": 0.7,
+  "max_tokens": 1024,
+  "frequency_penalty": 0,
+  "presence_penalty": 0,
+  "stream": false
+}

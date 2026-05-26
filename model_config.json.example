@@ -1,0 +1,17 @@
+{
+  "_comment_usage": "Copy this file to model_config.json (remove the .example suffix) before running.",
+  "_comment_endpoint_url": "Fill in your OpenAI-compatible chat completions endpoint URL.",
+  "endpoint_url": "https://your-endpoint/v1/chat/completions",
+  "_comment_api_key": "Fill in your API key/token. Keep this secret and do not commit real credentials.",
+  "api_key": "YOUR_API_KEY",
+  "_comment_model_name": "Fill in the model name served by your endpoint.",
+  "model_name": "YOUR_MODEL_NAME",
+  "_comment_adb_path": "Optional: absolute adb path. Leave empty to use adb from system PATH.",
+  "adb_path": "",
+  "temperature": 0.2,
+  "top_p": 0.7,
+  "max_tokens": 1024,
+  "frequency_penalty": 0,
+  "presence_penalty": 0,
+  "stream": false
+}

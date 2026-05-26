@@ -89,31 +89,31 @@ The initial focus is Android because ADB gives us a realistic control surface fo
 
 ## Expected Agent Loop
 
-The core loop we want to support looks like this:
+The current runtime loop in this repository is:
 
-1. Capture the current device state.
-2. Convert the screen and optional UI metadata into model-ready context.
-3. Ask a model or policy to choose the next action.
-4. Validate and execute the action on the device.
-5. Record screenshots, actions, model outputs, and errors.
-6. Decide whether the task is complete, failed, or should continue.
+1. Preflight device state (wake, unlock, return to home page).
+2. Capture a screenshot from the Android device.
+3. Build multimodal messages from instruction plus recent step history.
+4. Invoke an OpenAI-compatible multimodal endpoint.
+5. Parse one structured turn response (`navigate` / `extract` / `quit`).
+6. If `navigate`, execute one UI action (tap/swipe/type/open/wait/system key).
+7. Save step artifacts (raw screenshot, annotated screenshot, LLM traces, run log).
+8. Continue until `quit` or step limit.
 
-This loop should be simple enough for quick experiments, but structured enough to support serious evaluation.
+App opening is action-driven: the agent opens apps when the model emits `action=open`.
 
-## Current Status
+## Current Runtime Architecture
 
-The repository is just starting. The README describes the intended direction before the main implementation lands.
+Current core modules:
 
-Planned areas of work include:
+- `run_agent.py`: runner entrypoint; parses args, creates task log directories, enables dual logging (stdout + file), creates model client, and starts the loop.
+- `agent.py`: message construction and main agent loop orchestration.
+- `agent_io.py`: ADB actions, state preflight helpers, action execution, and response parsing.
+- `llm_client.py`: OpenAI-compatible multimodal client and LLM trace logging.
+- `logs.py`: per-run task directory creation and tee-style logging setup.
+- `app_name_to_package.py`: app alias to package mapping utilities used by `open` action.
 
-- defining the project layout;
-- adding the ADB interaction layer;
-- adding model adapter interfaces;
-- designing an action schema;
-- creating trace storage for experiments;
-- adding example tasks;
-- wiring a first end-to-end agent run;
-- documenting setup and usage.
+The architecture is intentionally modular, but the end-to-end flow is already wired and runnable.
 
 ## Who This Is For
 
@@ -133,20 +133,45 @@ The near-term priority is a clean, inspectable research workspace.
 
 ## Repository Structure
 
-The structure is still being defined. A likely direction is:
+Current top-level structure includes:
 
 ```text
 Mobile-Agent/
   README.md
-  mobile_agent/        # Core library code
-  scripts/             # Local run and experiment scripts
-  examples/            # Example tasks and agent runs
-  traces/              # Local task traces, usually gitignored
-  tests/               # Unit and integration tests
-  docs/                # Design notes and project documentation
+  run_agent.py
+  agent.py
+  agent_io.py
+  llm_client.py
+  logs.py
+  app_name_to_package.py
+  app_name_to_package.json
+  tasks/               # Task prompts + run scripts + per-run artifacts
+  references/          # Third-party reference implementations for study
 ```
 
-This may change as the implementation becomes clearer.
+Per-run artifacts are created under task run directories (often via `--trace-dir`) with this layout:
+
+```text
+<task-run-root>/
+  run_YYYY-mm-dd HH-MM-SS.log
+  screenshot/
+  screenshot_anno/
+  llm-tracer/
+```
+
+## External References
+
+To speed up research and avoid reinventing baseline patterns, we keep third-party references under `references/` for local study.
+
+- `references/agent-frameworks/`: mobile and GUI-agent implementations used to study action schemas, prompting, device control, tracing, and benchmark integration.
+- `references/coding-frameworks/`: coding-agent frameworks used to study planning loops, tool use conventions, recovery behavior, and execution harness patterns that may transfer to GUI-agent systems.
+
+Current coding-framework references include:
+
+- `references/coding-frameworks/claude-code/`
+- `references/coding-frameworks/DeepSeek-TUI/`
+
+These reference folders are for analysis and design inspiration. We should extract ideas into our own architecture and docs instead of copying code directly.
 
 ## Contributing
 
@@ -162,3 +187,19 @@ Before adding large features, prefer opening a design note or issue that explain
 ## License
 
 See [LICENSE](LICENSE).
+
+## Utility Scripts
+
+- `python extract_image_json_qwen.py <image_path>` sends one image to the configured Qwen3.5 multimodal endpoint and writes the returned JSON next to the image.
+- `python extract_image_json_qwen.py --from-adb` captures a fresh screenshot from the connected ADB device, then writes the extracted JSON beside that screenshot under `tasks/xhs_note_collection/artifacts/`.
+- Configure `model_config.json` (or copy `model_config.json.example` and remove the `.example` suffix) with `endpoint_url`, `api_key`, `model_name`, and optional `adb_path` before running scripts.
+
+Common run entrypoints:
+
+- `python run_agent.py --model-config model_config.json --instruction "..."`
+- Task wrapper scripts under `tasks/*/run_task.sh` usually pass `--trace-dir` so logs and traces stay under that task directory.
+
+Notes:
+
+- `run_agent.py` no longer uses `--answer-output-path`.
+- Runtime logs are dual-path by default: printed to stdout and written to the per-run log file.

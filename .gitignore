@@ -1,7 +1,20 @@
 .env
 .env.local
+config.json
 __pycache__/
 *.py[cod]
 tasks/**/traces/
 tasks/**/*.json
 references/agent-frameworks/
+
+# Runtime artifacts (logs, screenshots, llm request/response traces)
+*.log
+run_*.log
+
+# Generated task run folders, e.g. tasks/xhs_note_collection/2026-05-26_18-32-24/
+tasks/*/20??-??-??_??-??-??/
+
+# Artifact directories created during runs
+**/screenshot/
+**/screenshot_anno/
+**/llm-tracer/

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__websearch__web_search"
+    ]
+  }
+}
