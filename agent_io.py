@@ -28,8 +28,14 @@ from app_name_to_package import resolve_package_ids
 class AdbTools:
     """Wrapper around ADB commands for device interaction."""
 
-    def __init__(self, adb_path, device=None):
-        self.adb_path = adb_path
+    def __init__(self, device=None):
+        resolved_adb_path = shutil.which("adb")
+        if not resolved_adb_path:
+            raise SystemExit("Missing adb executable in system PATH.")
+        if not os.path.exists(resolved_adb_path):
+            raise SystemExit(f"Resolved adb path does not exist: {resolved_adb_path}")
+
+        self.adb_path = resolved_adb_path
         self.device = device
         self._device_flag = f" -s {device} " if device is not None else " "
         self.image_info = None

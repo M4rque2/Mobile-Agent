@@ -6,8 +6,6 @@ Example:
 """
 
 import argparse
-import shutil
-from pathlib import Path
 
 from agent_io import AdbTools
 from agent import run_agent_loop
@@ -67,13 +65,7 @@ def run_agent():
         llm_trace_dir=llm_trace_dir,
     )
 
-    adb_path = vlm.adb_path or shutil.which("adb")
-    if not adb_path:
-        raise SystemExit("Missing adb path. Set 'adb_path' in model_config.json or make adb available in system PATH.")
-    if vlm.adb_path and not Path(adb_path).exists():
-        raise SystemExit(f"Configured adb_path does not exist: {adb_path}")
-
-    adb_tools = AdbTools(adb_path=adb_path)
+    adb_tools = AdbTools()
 
     run_agent_loop(
         max_steps=args.max_steps,

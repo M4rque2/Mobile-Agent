@@ -34,7 +34,6 @@ def _json_safe(value):
             return _json_safe(value.dict())
         return str(value)
 
-
 def _try_parse_json(text: str):
     if not text:
         return None
@@ -47,7 +46,6 @@ def _try_parse_json(text: str):
         return json.loads(cleaned)
     except Exception:
         return None
-
 
 class LlmTraceLogger:
     def __init__(self, trace_dir=None):
@@ -89,8 +87,6 @@ def load_model_config(config_path: str) -> dict[str, Any]:
     endpoint_url = str(raw["endpoint_url"]).strip()
     api_key = str(raw["api_key"]).strip()
     model_name = str(raw["model_name"]).strip()
-    adb_path = str(raw.get("adb_path", "")).strip()
-
     if not endpoint_url:
         raise SystemExit(f"Missing 'endpoint_url' in model config: {path}")
     if not api_key:
@@ -102,7 +98,6 @@ def load_model_config(config_path: str) -> dict[str, Any]:
         "endpoint_url": endpoint_url,
         "api_key": api_key,
         "model_name": model_name,
-        "adb_path": adb_path,
         "temperature": float(raw.get("temperature", 0.2)),
         "top_p": float(raw.get("top_p", 0.7)),
         "max_tokens": int(raw.get("max_tokens", 1024)),
@@ -193,7 +188,6 @@ class OpenAICompatibleMultimodalClient:
         stream: bool = True,
         max_retry: int = 3,
         llm_trace_dir: str | None = None,
-        adb_path: str = "",
     ):
         self.endpoint_url = endpoint_url
         self.api_key = api_key
@@ -205,7 +199,6 @@ class OpenAICompatibleMultimodalClient:
         self.presence_penalty = presence_penalty
         self.stream = stream
         self.max_retry = max_retry
-        self.adb_path = adb_path
         self.trace_logger = LlmTraceLogger(llm_trace_dir)
 
     def invoke(self, messages: list[dict[str, Any]]) -> tuple[str, Any, Any]:
@@ -285,7 +278,6 @@ def create_llm_client(config_path: str = DEFAULT_MODEL_CONFIG_PATH, llm_trace_di
         presence_penalty=cfg["presence_penalty"],
         stream=cfg["stream"],
         llm_trace_dir=llm_trace_dir,
-        adb_path=cfg.get("adb_path", ""),
     )
 
 
