@@ -1,7 +1,9 @@
 """GUI-agent message construction and prompt definitions."""
 
+import copy
 import json
 import os
+import re
 import time
 from datetime import datetime
 from typing import Any
@@ -73,6 +75,9 @@ Rules:
 - Never mix `extract` data with a tool call.
 - Use `extract` only when the current screenshot already shows the target informational page whose data should be crawled now.
 - Use `quit` when the mission is done or the UI is blocked/stuck in a way you cannot overcome safely.
+- If the same or similar action has been retried multiple times without meaningful progress (for example repeated taps/swipes with unchanged result), choose `quit` with `status` = `failure` instead of continuing blind retries.
+- When quitting due to failure, summarize the concrete reason in `summary` (for example repeated no-progress attempts, blocked UI, or unrecoverable state mismatch), and include brief evidence in `data` when possible.
+- Never output plain reasoning text alone. If you cannot produce a valid `navigate` or `extract` response, return a valid `quit` JSON with `status` = `failure`.
 - `quit.summary` must summarize the final task result.
 - Keep `summary` brief.'''
 
@@ -104,6 +109,38 @@ def _summarize_history_output(text):
     if "<tool_call>" in text:
         return text.split("<tool_call>")[0].strip()
     return text.strip()
+
+
+def _extract_note_summaries(data: Any) -> list[dict[str, Any]]:
+    records = data.get("notes") if isinstance(data, dict) and isinstance(data.get("notes"), list) else None
+    if records is None:
+        records = [data]
+
+    summaries = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        summaries.append({
+            "note_title": record.get("note_title"),
+            "author_name": record.get("author_name"),
+            "is_video": record.get("is_video"),
+        })
+    return summaries
+
+
+def _history_output_for_turn(turn: dict[str, Any]) -> str:
+    if turn.get("choice") != "extract":
+        return json.dumps(turn, ensure_ascii=False)
+
+    compact_turn = {
+        "choice": "extract",
+        "summary": turn.get("summary") or "Extracted target page data",
+        "data": {
+            "notes": _extract_note_summaries(turn.get("data")),
+        },
+    }
+    return json.dumps(compact_turn, ensure_ascii=False)
+
 
 def build_messages(
     image_path,
@@ -215,6 +252,106 @@ def prepare_device_for_task(adb_tools: Any) -> None:
     )
 
 
+def _note_identity(record: Any) -> str | None:
+    if not isinstance(record, dict):
+        return None
+    title = str(record.get("note_title") or "").strip()
+    author = str(record.get("author_name") or "").strip()
+    if not title:
+        text = str(record.get("note_text") or "").strip()
+        title = text.splitlines()[0].strip() if text else ""
+    author_key = re.sub(r"[（(].*?[）)]", "", author)
+    author_key = re.sub(r"[^\w\u4e00-\u9fff]+", "", author_key.lower())
+    title_key = re.sub(r"[^\w\u4e00-\u9fff]+", "", title.lower())
+    identity = f"{author_key}\n{title_key}".strip()
+    return identity or None
+
+
+def _is_duplicate_note_identity(identity: str | None, existing_identities: set[str]) -> bool:
+    if not identity:
+        return False
+    if identity in existing_identities:
+        return True
+
+    try:
+        author, title = identity.split("\n", 1)
+    except ValueError:
+        return False
+    if len(title) < 8:
+        return False
+
+    for existing_identity in existing_identities:
+        try:
+            existing_author, existing_title = existing_identity.split("\n", 1)
+        except ValueError:
+            continue
+        if author != existing_author or len(existing_title) < 8:
+            continue
+        if title in existing_title or existing_title in title:
+            return True
+    return False
+
+
+def _load_existing_note_identities(output_path: str) -> set[str]:
+    identities: set[str] = set()
+    if not os.path.exists(output_path):
+        return identities
+
+    with open(output_path, "r", encoding="utf-8") as output_file:
+        for line in output_file:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            record = payload.get("data") if isinstance(payload, dict) else payload
+            identity = _note_identity(record)
+            if identity:
+                identities.add(identity)
+    return identities
+
+
+def append_extract_output(output_path: str, step_id: int, turn: dict[str, Any]) -> None:
+    """Append extracted note records as JSONL.
+
+    If the model returns a crawler-style payload containing `notes`, each new
+    note is written as its own line. Repeated notes are skipped because some
+    models return a cumulative notes list on each extract turn.
+    """
+    data = turn.get("data")
+    records = data.get("notes") if isinstance(data, dict) and isinstance(data.get("notes"), list) else None
+    if not records:
+        records = [data]
+
+    existing_identities = _load_existing_note_identities(output_path)
+    seen_this_turn: set[str] = set()
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "a", encoding="utf-8") as output_file:
+        for index, record in enumerate(records):
+            identity = _note_identity(record)
+            if (
+                identity
+                and (
+                    _is_duplicate_note_identity(identity, existing_identities)
+                    or _is_duplicate_note_identity(identity, seen_this_turn)
+                )
+            ):
+                print(f"[EXTRACT SKIPPED] duplicate note at record_index={index}")
+                continue
+            if identity:
+                seen_this_turn.add(identity)
+            line_payload = {
+                "step": step_id,
+                "summary": turn.get("summary"),
+                "record_index": index,
+                "data": record,
+            }
+            output_file.write(json.dumps(line_payload, ensure_ascii=False) + "\n")
+
+
 def run_agent_loop(
     *,
     max_steps: int,
@@ -229,6 +366,7 @@ def run_agent_loop(
     prepare_device_for_task(adb_tools)
 
     history = []
+    output_jsonl_path = os.path.join(task_root, "output.jsonl")
 
     for step_id in range(max_steps):
         print(f"\n{'=' * 50}\nSTEP {step_id}\n{'=' * 50}")
@@ -263,7 +401,9 @@ def run_agent_loop(
         if choice == "extract":
             summary = turn.get("summary") or "Extracted target page data"
             print(f"[EXTRACT] {summary}")
-            history.append({"output": json.dumps(turn, ensure_ascii=False), "image": screenshot_path})
+            append_extract_output(output_jsonl_path, step_id, turn)
+            print(f"[EXTRACT SAVED] {output_jsonl_path}")
+            history.append({"output": _history_output_for_turn(turn), "image": screenshot_path})
             continue
 
         if choice == "quit":
@@ -275,7 +415,8 @@ def run_agent_loop(
             history.append({"output": json.dumps(turn, ensure_ascii=False), "image": screenshot_path})
             break
 
-        action_parameter = turn["tool_call"]["arguments"]
+        history_turn = copy.deepcopy(turn)
+        action_parameter = copy.deepcopy(turn["tool_call"]["arguments"])
         with Image.open(screenshot_path) as image:
             action_parameter = rescale_coordinates(action_parameter, image.width, image.height)
         print(f"[ACTION] {json.dumps(action_parameter, ensure_ascii=False)}")
@@ -292,7 +433,7 @@ def run_agent_loop(
         if should_terminate:
             break
 
-        history.append({"output": json.dumps(turn, ensure_ascii=False), "image": screenshot_path})
+        history.append({"output": json.dumps(history_turn, ensure_ascii=False), "image": screenshot_path})
         annotate_screenshot(
             screenshot_path,
             action_parameter,

@@ -60,8 +60,8 @@ class AdbTools:
 
     def get_screenshot(self, image_path, retry_times=3):
         """Capture screenshot and save to image_path."""
-        self._run("shell input keyevent KEYCODE_WAKEUP")
-        time.sleep(0.3)
+        # self._run("shell input keyevent KEYCODE_WAKEUP")
+        # time.sleep(0.3)
 
         cmd = [self.adb_path]
         if self.device:
@@ -321,6 +321,15 @@ class AdbTools:
 
 
 def annotate_screenshot(image_path, action_parameter, save_path="screenshot_anno.png"):
+    """Render action visualization on a screenshot for debugging artifacts.
+
+    Supported actions:
+    - click: draw a red dot centered at `coordinate`
+    - scroll/swipe: draw a red arrow from `coordinate` to `coordinate2`
+
+    Coordinates are expected to be device pixel coordinates (already rescaled).
+    Returns the saved annotation path on success, or None for unsupported actions.
+    """
     image = Image.open(image_path)
     draw = ImageDraw.Draw(image)
 
@@ -356,6 +365,24 @@ def annotate_screenshot(image_path, action_parameter, save_path="screenshot_anno
 
 
 def smart_resize(height, width, factor=16, min_pixels=None, max_pixels=None):
+    """Resize dimensions to satisfy model-friendly image constraints.
+
+    This helper does not force a fixed target resolution. Instead, it keeps the
+    aspect ratio behavior while making sure:
+    - height/width are aligned to `factor` multiples,
+    - total pixels fall within [min_pixels, max_pixels],
+    - aspect ratio is not extremely skewed.
+
+    Args:
+        height: Original image height in pixels.
+        width: Original image width in pixels.
+        factor: Alignment granularity (default 16).
+        min_pixels: Optional lower bound of total pixels.
+        max_pixels: Optional upper bound of total pixels.
+
+    Returns:
+        A tuple (resized_height, resized_width).
+    """
     IMAGE_MIN_TOKEN_NUM = 4
     IMAGE_MAX_TOKEN_NUM = 16384
     MAX_RATIO = 200
@@ -466,14 +493,38 @@ def parse_turn_response(output_text: str) -> dict[str, Any]:
 
 
 def rescale_coordinates(action_parameter: dict[str, Any], width: int, height: int):
-    if action_parameter.get("action") == "left_click":
-        action_parameter["action"] = "click"
-    for key in ("coordinate", "coordinate1", "coordinate2"):
-        if key in action_parameter:
-            x = max(0, min(1000, int(action_parameter[key][0])))
-            y = max(0, min(1000, int(action_parameter[key][1])))
+    coord_keys = [key for key in ("coordinate", "coordinate1", "coordinate2") if key in action_parameter]
+    if not coord_keys:
+        return action_parameter
+
+    raw_points: list[tuple[str, int, int]] = []
+    for key in coord_keys:
+        x = int(action_parameter[key][0])
+        y = int(action_parameter[key][1])
+        raw_points.append((key, x, y))
+
+    # Case 1: normalized coordinate protocol in [0, 1000].
+    if all(0 <= x <= 1000 and 0 <= y <= 1000 for _, x, y in raw_points):
+        for key, x, y in raw_points:
             action_parameter[key][0] = int(x / 1000 * width)
             action_parameter[key][1] = int(y / 1000 * height)
+        return action_parameter
+
+    # Case 2: model already outputs absolute pixel coordinates.
+    # If they are already within current device resolution, use them directly.
+    if all(0 <= x <= width and 0 <= y <= height for _, x, y in raw_points):
+        return action_parameter
+
+    # Case 3: coordinates exceed current device resolution.
+    # Treat as absolute coordinates from another source resolution and rescale.
+    src_width = max(width, max(x for _, x, _ in raw_points))
+    src_height = max(height, max(y for _, _, y in raw_points))
+
+    for key, x, y in raw_points:
+        scaled_x = int(x / src_width * width)
+        scaled_y = int(y / src_height * height)
+        action_parameter[key][0] = max(0, min(width, scaled_x))
+        action_parameter[key][1] = max(0, min(height, scaled_y))
     return action_parameter
 
 
