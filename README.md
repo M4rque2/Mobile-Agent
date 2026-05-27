@@ -1,45 +1,39 @@
 # GUI Agent
 
-Mobile-Agent is an early-stage research and engineering project for understanding and building GUI agents, with an initial focus on Android devices.
+## Why This Repo Exists
+
+Mobile-Agent is an early-stage research and engineering project for understanding and building GUI agents, with an initial focus on Android devices for crawling jobs.
+
+### why not claude code, codex
 
 We assume the reader is already familiar with coding agents such as Claude Code, Codex, Gemini CLI, or similar tools. Those agents are strong when the task can be solved by reading files, editing code, running commands, and checking tests. They can sometimes be forced into a GUI-agent style workflow by giving them computer-use tools: take a screenshot, inspect the interface, click, type, observe again, and continue.
 
 But that is not what coding agents naturally optimize for. When they can solve a problem by writing code, calling an API, changing a file, or using a command-line shortcut, they usually will. That is often the right behavior for software engineering, but it is different from doing work through a graphical interface the way a human user does.
 
+### why not GUI Agent
 GUI agents are AI systems designed around that human-like interaction loop: observe the screen, understand the visible state, choose a UI action, execute it, then observe again. The interface is not a fallback when code access is unavailable; it is the primary environment.
 
-Recent progress in multimodal models has made this idea more realistic, but the field is still early. We know GUI agents can sometimes interpret screenshots, follow instructions, and execute useful actions. We do not yet know how to make them consistently reliable, safe, measurable, and efficient across real applications.
+Recent progress in multimodal models has made GUI agents more practical, but most current systems still target predefined task completion. A common objective is something like "send a message to Linda": the agent follows a mostly fixed sequence of steps toward one terminal goal. In programming terms, this often behaves like traversing a directed acyclic graph (DAG) of expected states and actions.
 
-This repository starts from that gap. We want to study what is already working, identify what remains unclear, and build a practical workspace for mobile GUI-agent experiments.
+### spider agent
+Our target is different. We want a crawler-style GUI agent that not only performs a specific operation, but also explores pages systematically and achieves meaningful coverage across the interface. This is closer to traversing an N-ary tree with branching paths, revisits, and coverage control. Existing agent infrastructure is hard to push into this behavior through prompt tuning alone, so this repository is built to develop the missing runtime and evaluation components for traversal-oriented mobile GUI agents.
 
-## Why This Repo Exists
+## What We Done
 
-I created this research repository to build GUI agents that work with multimodal models and help people handle tedious, repeated work inside graphical interfaces.
+Current completed foundations in this repository:
 
-Maybe MCP, CLI tools, APIs, and deeper software integrations will replace much of this in the future. I hope they do. But today, I and the people I work with still have a lot of work trapped inside GUI interfaces: periodic checks, form filling, app operations, visual inspection, repetitive mobile workflows, and tasks that are simple for a human but expensive in time and attention.
+- **Action space.** We have implemented a practical action schema for mobile control, including click, swipe, type, system button operations, open app, and wait.
+- **Observing system (`agent_io.py`).** We have implemented device interaction and observation utilities around ADB, including screenshot capture, UI hierarchy dump, device state checks, and action execution helpers.
+- **Basic agent loop (`agent.py`).** We have implemented the core loop: observe screen, build messages, call multimodal model, parse structured response, execute one action, and continue step by step.
+- **Log system for analysis.** We have implemented run logs and per-step artifacts (screenshots, annotated screenshots, and LLM traces) for debugging and post-run analysis.
 
-I do not want to wait for someone else to automate all of it. I do not want to keep spending my life on repetitive UI work. So this project is an attempt to build the automation layer ourselves: observe the interface, reason with a multimodal model, act through the GUI, and keep improving the loop until it becomes useful.
+## What Is Pending / What We Will Do
 
-## What We Know
+Current priority work items:
 
-Several things are becoming clear from current GUI-agent research:
-
-- **The screen is a useful interface.** A model that can read screenshots and UI text can often infer what the user wants and where the next action should happen.
-- **Action grounding matters.** It is not enough for a model to describe an action. The system must translate intent into coordinates, gestures, text input, app navigation, or structured accessibility actions.
-- **Traces are essential.** GUI-agent failures are hard to understand without screenshots, model outputs, actions, timing, and intermediate states.
-- **Benchmarks are improving but incomplete.** Existing tasks help compare agents, but they rarely capture all the messiness of real apps, dynamic content, login state, latency, and unexpected UI changes.
-- **The model is only one part of the system.** Prompting, perception, memory, action schemas, verification, recovery, and environment control can matter as much as raw model capability.
-
-## What We Don't Know
-
-Important questions are still open:
-
-- **Reliability:** How do we make agents complete long, multi-step tasks without drifting, repeating actions, or getting stuck?
-- **Generalization:** How well can an agent transfer from benchmark apps to real apps with unfamiliar layouts and dynamic content?
-- **Evaluation:** What should count as success when a task has many valid paths, partial progress, or ambiguous end states?
-- **Safety:** How should agents handle irreversible actions, private data, payments, account changes, or destructive operations?
-- **Efficiency:** How can agents reduce model calls, latency, and unnecessary exploration while still remaining robust?
-- **Human collaboration:** When should an agent ask for help, request confirmation, or expose its uncertainty?
+- **Memory system.** We currently use chat history as memory only. A complete memory system is still missing and needs to be designed and implemented.
+- **Automatic self-evolution system.** We plan to build a Hermes-like optimization loop so the agent can autonomously improve on common recurring tasks.
+- **Advanced observe system.** In autonomous-driving style systems, observation often targets around 10 Hz refresh, while current multimodal inference is usually slower than 1 Hz. This means action updates can take several seconds per turn, which is not enough for high-frequency app interactions (for example short-video and game-like scenarios). We need an adaptive screenshot system to bridge this gap.
 
 ## Current Industrial Status
 
@@ -63,29 +57,6 @@ So the corrected view is: the top-tier U.S. labs are active in computer and brow
 Smartphone GUI agents still appear less researched and less mature than desktop or browser agents. That gap is the main reason this repository starts with mobile, and especially Android. Phones contain many of the repetitive GUI workflows we actually want to automate, but they also add constraints that make the problem harder: small screens, touch gestures, app switching, mobile keyboards, permissions, dynamic layouts, and deeply stateful apps.
 
 This project will focus on that smartphone-agent gap.
-
-## What We Want To Build
-
-Mobile devices are a natural but difficult environment for GUI agents: apps are visual, stateful, latency-sensitive, and often have no stable programmatic API. A mobile agent therefore needs more than a model call. It needs a full loop around perception, planning, action execution, recovery, and evaluation.
-
-Mobile-Agent is intended to grow into that loop.
-
-At a high level, we want Mobile-Agent to provide:
-
-- **Android device control** through ADB for screenshots, taps, swipes, text input, app launches, and system navigation.
-- **Multimodal model adapters** so different vision-language models can be tested behind a common interface.
-- **Action planning and execution utilities** that turn model decisions into reliable device operations.
-- **Task traces and logs** for debugging what the agent saw, decided, executed, and observed next.
-- **Benchmark integration** for comparing agents across repeatable mobile tasks.
-- **Experiment harnesses** that make it easy to run, inspect, and reproduce mobile-agent trials.
-
-## Project Direction
-
-This project starts from a simple premise: a useful mobile agent should be measurable, debuggable, and modular.
-
-Measurable means we should be able to run the same task more than once and compare results. Debuggable means every step in the agent loop should leave enough evidence for a human to understand failures. Modular means we should be able to swap models, prompts, planners, perception strategies, and action executors without rewriting the whole system.
-
-The initial focus is Android because ADB gives us a realistic control surface for screenshots and UI actions. The longer-term direction may include broader mobile environments, richer UI understanding, human-in-the-loop correction, and safer execution policies.
 
 ## Expected Agent Loop
 
@@ -114,22 +85,6 @@ Current core modules:
 - `app_name_to_package.py`: app alias to package mapping utilities used by `open` action.
 
 The architecture is intentionally modular, but the end-to-end flow is already wired and runnable.
-
-## Who This Is For
-
-This project is for people interested in mobile GUI agents, Android automation, multimodal model evaluation, and agent benchmarking. It may be useful to researchers testing model behavior, engineers building automation harnesses, or anyone trying to understand how agents behave in real mobile interfaces.
-
-## Non-Goals For Now
-
-To keep the project focused, the first versions are not trying to be:
-
-- a production device farm;
-- a general replacement for Appium or UIAutomator;
-- a no-code automation product;
-- a benchmark leaderboard by itself;
-- a fully autonomous system for sensitive personal-device operations.
-
-The near-term priority is a clean, inspectable research workspace.
 
 ## Repository Structure
 
@@ -163,43 +118,18 @@ Per-run artifacts are created under task run directories (often via `--trace-dir
 
 To speed up research and avoid reinventing baseline patterns, we keep third-party references under `references/` for local study.
 
-- `references/agent-frameworks/`: mobile and GUI-agent implementations used to study action schemas, prompting, device control, tracing, and benchmark integration.
-- `references/coding-frameworks/`: coding-agent frameworks used to study planning loops, tool use conventions, recovery behavior, and execution harness patterns that may transfer to GUI-agent systems.
+- `references/gui-agent/`: mobile and GUI-agent implementations used to study action schemas, prompting, device control, tracing, and benchmark integration.
+- `references/coding-agent/`: coding-agent frameworks used to study planning loops, tool use conventions, recovery behavior, and execution harness patterns that may transfer to GUI-agent systems.
+- `references/claw-agent/`: ClawGUI-related references and supporting materials.
 
-Current coding-framework references include:
+Current coding-agent references include:
 
-- `references/coding-frameworks/claude-code/`
-- `references/coding-frameworks/DeepSeek-TUI/`
+- `references/coding-agent/claude-code/`
+- `references/coding-agent/DeepSeek-TUI/`
 
 These reference folders are for analysis and design inspiration. We should extract ideas into our own architecture and docs instead of copying code directly.
 
-## Contributing
-
-The best early contributions are clarifying the agent loop, improving the action schema, adding small reproducible Android tasks, and making experiment traces easier to inspect.
-
-Before adding large features, prefer opening a design note or issue that explains:
-
-- what mobile-agent problem the change solves;
-- what assumptions it makes about Android devices, models, or benchmarks;
-- how the behavior can be tested or reproduced;
-- what trace output should exist when something fails.
 
 ## License
 
 See [LICENSE](LICENSE).
-
-## Utility Scripts
-
-- `python extract_image_json_qwen.py <image_path>` sends one image to the configured Qwen3.5 multimodal endpoint and writes the returned JSON next to the image.
-- `python extract_image_json_qwen.py --from-adb` captures a fresh screenshot from the connected ADB device, then writes the extracted JSON beside that screenshot under `tasks/xhs_note_collection/artifacts/`.
-- Configure `model_config.json` (or copy `model_config.json.example` and remove the `.example` suffix) with `endpoint_url`, `api_key`, `model_name`, and optional `adb_path` before running scripts.
-
-Common run entrypoints:
-
-- `python run_agent.py --model-config model_config.json --instruction "..."`
-- Task wrapper scripts under `tasks/*/run_task.sh` usually pass `--trace-dir` so logs and traces stay under that task directory.
-
-Notes:
-
-- `run_agent.py` no longer uses `--answer-output-path`.
-- Runtime logs are dual-path by default: printed to stdout and written to the per-run log file.
