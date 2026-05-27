@@ -31,9 +31,11 @@ Current completed foundations in this repository:
 
 Current priority work items:
 
+- **Action expectation and mismatch detection.** After each action, the agent should predict what observable change is expected in the next state (for example, page transition, popup disappearance, scroll displacement, or focus change). If the observed result does not match the expected result, the system should immediately raise attention and enter recovery mode. This is conceptually related to ReAct and Reflexion, but implemented inside one agent loop rather than split across separate executor and reflector agents.
 - **Memory system.** We currently use chat history as memory only. A complete memory system is still missing and needs to be designed and implemented.
 - **Automatic self-evolution system.** We plan to build a Hermes-like optimization loop so the agent can autonomously improve on common recurring tasks.
 - **Advanced observe system.** In autonomous-driving style systems, observation often targets around 10 Hz refresh, while current multimodal inference is usually slower than 1 Hz. This means action updates can take several seconds per turn, which is not enough for high-frequency app interactions (for example short-video and game-like scenarios). We need an adaptive screenshot system to bridge this gap.
+- **Coordinate scaling impact and necessity.** It is still unresolved whether coordinate scaling (for example normalized 0-1000 to device pixels) improves real task performance in our runtime. We need controlled A/B evaluation across app types (static pages, feeds, short-video, game-like pages), with metrics such as action success rate, no-op rate, correction/retry rate, and end-task completion. We should keep scaling only where it provides measurable benefit and avoid it where absolute-coordinate execution is more stable.
 
 ## Current Industrial Status
 
@@ -100,6 +102,7 @@ Mobile-Agent/
   logs.py
   app_name_to_package.py
   app_name_to_package.json
+  research_notes/      # Investigation notes, empirical findings, and future implementation TODOs
   tasks/               # Task prompts + run scripts + per-run artifacts
   references/          # Third-party reference implementations for study
 ```
@@ -128,6 +131,12 @@ Current coding-agent references include:
 - `references/coding-agent/DeepSeek-TUI/`
 
 These reference folders are for analysis and design inspiration. We should extract ideas into our own architecture and docs instead of copying code directly.
+
+## Research Notes
+
+We keep investigation notes, empirical findings, unresolved design questions, and future implementation TODOs under `research_notes/`.
+
+These notes are lightweight records from real runs and framework research. They are meant to preserve evidence and design direction without immediately changing runtime behavior.
 
 
 ## License

@@ -32,7 +32,7 @@ Related runtime error in run log:
 3. In non-stream mode, client fallback currently uses `reasoning` when `content` is null.
 4. The parser expects JSON from the returned text; plain reasoning text is not parseable as required protocol output.
 
-## Development Hint
+## Research Note
 Treat this as a protocol-robustness gap under state drift conditions:
 - State drift can be introduced by manual intervention, delayed UI effects, or action non-determinism.
 - A model may provide valid internal reasoning but no executable action payload.
