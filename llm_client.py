@@ -13,8 +13,6 @@ from typing import Any
 import requests
 from PIL import Image, ImageFile
 
-from agent_io import smart_resize
-
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 DEFAULT_MODEL_CONFIG_PATH = "model_config.json"
 
@@ -117,15 +115,8 @@ def image_to_data_url(image_path: str) -> str:
     if image_path.startswith("file://"):
         image_path = image_path[len("file://") :]
     with Image.open(image_path) as image:
-        resized_height, resized_width = smart_resize(
-            image.height,
-            image.width,
-            factor=28,
-            min_pixels=3136,
-            max_pixels=1003520,
-        )
-        resized_image = image.resize((resized_width, resized_height))
-    return f"data:image/png;base64,{pil_to_base64_png(resized_image)}"
+        original_image = image.copy()
+    return f"data:image/png;base64,{pil_to_base64_png(original_image)}"
 
 
 def convert_messages_to_openai_image_url(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

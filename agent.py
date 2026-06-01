@@ -8,12 +8,10 @@ import time
 from datetime import datetime
 from typing import Any
 
-from PIL import Image
-
 from agent_io import annotate_screenshot, execute_action, parse_turn_response, rescale_coordinates
 
 
-SYSTEM_PROMPT = '''# Tools
+SYSTEM_PROMPT_TEMPLATE = '''# Tools
 
 You may call one or more functions to assist with the user query.
 
@@ -22,19 +20,21 @@ You are provided with function signatures within <tools></tools> XML tags:
 {"type": "function", "function": {"name_for_human": "mobile_use", "name": "mobile_use", "description": "Use a touchscreen to interact with a mobile device, and take screenshots.
 * This is an interface to a mobile device with touchscreen. You can perform actions like clicking, typing, swiping, etc.
 * Some applications may take time to start or process actions, so you may need to wait and take successive screenshots to see the results of your actions.
-* The screen's resolution is 1000x1000.
+* Use normalized action coordinates in the 0-1000 range for both x and y.
+* The top-left corner is (0, 0), the bottom-right corner is (1000, 1000), and the runtime will scale your action coordinates to the real device resolution.
+* Do not use physical device pixels or resized-image pixels in tool arguments.
 * Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges unless asked.", "parameters": {"properties": {"action": {"description": "The action to perform. The available actions are:
 * `key`: Perform a key event on the mobile device.
     - This supports adb's `keyevent` syntax.
     - Examples: \\"volume_up\\", \\"volume_down\\", \\"power\\", \\"camera\\", \\"clear\\".
-* `click`: Click the point on the screen with coordinate (x, y).
-* `long_press`: Press the point on the screen with coordinate (x, y) for specified seconds.
-* `swipe`: Swipe from the starting point with coordinate (x, y) to the end point with coordinates2 (x2, y2).
+* `click`: Click the point on the screen with normalized coordinate (x, y).
+* `long_press`: Press the point on the screen with normalized coordinate (x, y) for specified seconds.
+* `swipe`: Swipe from the starting point with normalized coordinate (x, y) to the end point with normalized coordinate2 (x2, y2).
 * `type`: Input the specified text into the activated input box.
 * `system_button`: Press the system button.
 * `open`: Open an app on the device.
 * `wait`: Wait specified seconds for the change to happen.
-* `interact`: Resolve the blocking window by interacting with the user.", "enum": ["key", "click", "long_press", "swipe", "type", "system_button", "open", "wait", "interact"], "type": "string"}, "coordinate": {"description": "(x, y): The x (pixels from the left edge) and y (pixels from the top edge) coordinates to move the mouse to. Required only by `action=click`, `action=long_press`, and `action=swipe`.", "type": "array"}, "coordinate2": {"description": "(x, y): The x (pixels from the left edge) and y (pixels from the top edge) coordinates to move the mouse to. Required only by `action=swipe`.", "type": "array"}, "text": {"description": "Required only by `action=key`, `action=type`, `action=open`, and `action=interact`.", "type": "string"}, "time": {"description": "The seconds to wait. Required only by `action=long_press` and `action=wait`.", "type": "number"}, "button": {"description": "Back means returning to the previous interface, Home means returning to the desktop, Menu means opening the application background menu, and Enter means pressing the enter. Required only by `action=system_button`", "enum": ["Back", "Home", "Menu", "Enter"], "type": "string"}}, "required": ["action"], "type": "object"}, "args_format": "Format the arguments as a JSON object."}}
+* `interact`: Resolve the blocking window by interacting with the user.", "enum": ["key", "click", "long_press", "swipe", "type", "system_button", "open", "wait", "interact"], "type": "string"}, "coordinate": {"description": "(x, y): normalized 0-1000 action coordinate. Required only by `action=click`, `action=long_press`, and `action=swipe`.", "type": "array"}, "coordinate2": {"description": "(x, y): normalized 0-1000 action coordinate. Required only by `action=swipe`.", "type": "array"}, "text": {"description": "Required only by `action=key`, `action=type`, `action=open`, and `action=interact`.", "type": "string"}, "time": {"description": "The seconds to wait. Required only by `action=long_press` and `action=wait`.", "type": "number"}, "button": {"description": "Back means returning to the previous interface, Home means returning to the desktop, Menu means opening the application background menu, and Enter means pressing the enter. Required only by `action=system_button`", "enum": ["Back", "Home", "Menu", "Enter"], "type": "string"}}, "required": ["action"], "type": "object"}, "args_format": "Format the arguments as a JSON object."}}
 </tools>
 
 # Required response protocol
@@ -80,6 +80,10 @@ Rules:
 - Never output plain reasoning text alone. If you cannot produce a valid `navigate` or `extract` response, return a valid `quit` JSON with `status` = `failure`.
 - `quit.summary` must summarize the final task result.
 - Keep `summary` brief.'''
+
+
+def build_system_prompt() -> str:
+    return SYSTEM_PROMPT_TEMPLATE
 
 def _try_parse_json(text):
     if not text:
@@ -188,7 +192,7 @@ def build_messages(
     messages = [
         {
             "role": "system",
-            "content": [{"text": SYSTEM_PROMPT}],
+            "content": [{"text": build_system_prompt()}],
         }
     ]
 
@@ -417,12 +421,23 @@ def run_agent_loop(
 
         history_turn = copy.deepcopy(turn)
         action_parameter = copy.deepcopy(turn["tool_call"]["arguments"])
-        with Image.open(screenshot_path) as image:
-            action_parameter = rescale_coordinates(action_parameter, image.width, image.height)
-        print(f"[ACTION] {json.dumps(action_parameter, ensure_ascii=False)}")
+        print(f"[ACTION RAW] {json.dumps(action_parameter, ensure_ascii=False)}")
+        width, height = adb_tools.get_display_size()
+        try:
+            scaled_action_parameter = rescale_coordinates(action_parameter, width, height)
+        except Exception as exc:
+            print(f"[ERROR] Failed to rescale normalized action coordinates: {exc}")
+            history.append({"output": json.dumps(history_turn, ensure_ascii=False), "image": screenshot_path})
+            continue
+        if scaled_action_parameter != action_parameter:
+            print(
+                "[ACTION SCALED] "
+                f"{json.dumps(scaled_action_parameter, ensure_ascii=False)} "
+                f"screen={width}x{height}"
+            )
 
         should_terminate = execute_action(
-            action_parameter,
+            scaled_action_parameter,
             instruction,
             adb_tools,
             vlm.api_key,
@@ -436,7 +451,7 @@ def run_agent_loop(
         history.append({"output": json.dumps(history_turn, ensure_ascii=False), "image": screenshot_path})
         annotate_screenshot(
             screenshot_path,
-            action_parameter,
+            scaled_action_parameter,
             os.path.join(anno_dir, f"screenshot_anno_{step_id}.png"),
         )
         time.sleep(2)
